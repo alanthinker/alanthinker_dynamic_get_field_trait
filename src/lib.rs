@@ -102,7 +102,7 @@ pub trait DynamicGetterExt: DynamicGetter {
     }
 
     /// 查找字段名称（支持模糊匹配）
-    fn find_field_name(&self, pattern: &str) -> Option<String> {
+    fn search_field_name(&self, pattern: &str) -> Option<String> {
         self.field_names()
             .into_iter()
             .find(|name| name.contains(pattern) || pattern.contains(name))
