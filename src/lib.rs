@@ -128,60 +128,74 @@ impl MethodInfo {
     pub fn is_static(&self) -> bool {
         matches!(&self.kind, MethodKind::Static { .. })
     }
-    pub fn call(&self, obj: Option<&dyn Any>, args: &[&dyn Any]) -> Result<Box<dyn Any>> {
+
+    /// 通过不可变引用调用方法
+    pub fn call(&self, obj: &dyn Any, args: &[&dyn Any]) -> Result<Box<dyn Any>> {
         match &self.kind {
             MethodKind::Immutable { call, .. } => {
-                if let Some(o) = obj {
-                    call(o, args)
-                        .ok_or_else(|| anyhow!("Failed to call immutable method '{}'", self.name()))
-                } else {
-                    bail!(
-                        "Immutable method '{}' requires object reference",
-                        self.name()
-                    )
+                let r = call(obj, args);
+                match r {
+                    Some(r1) => {
+                        //
+                        Ok(r1)
+                    }
+                    None => {
+                        //
+                        bail!("Failed to call immutable method '{}'", self.name())
+                    }
                 }
+                //.ok_or_else(|| anyhow!("Failed to call immutable method '{}'", self.name()))
             }
             MethodKind::Mutable { .. } => {
-                bail!("Cannot call mutable method with immutable reference")
+                bail!(
+                    "Cannot call mutable method '{}' with immutable reference",
+                    self.name()
+                )
             }
-            MethodKind::Static { call, .. } => {
-                call(args).ok_or_else(|| anyhow!("Failed to call static method '{}'", self.name()))
+            MethodKind::Static { .. } => {
+                bail!(
+                    "Cannot call static method '{}' with object reference",
+                    self.name()
+                )
             }
         }
     }
-    pub fn call_mut(&self, obj: Option<&mut dyn Any>, args: &[&dyn Any]) -> Result<Box<dyn Any>> {
+
+    /// 通过可变引用调用方法
+    pub fn call_mut(&self, obj: &mut dyn Any, args: &[&dyn Any]) -> Result<Box<dyn Any>> {
         match &self.kind {
-            MethodKind::Immutable { call, .. } => {
-                if let Some(o) = obj {
-                    let obj_ref: &dyn Any = o; // 修复：用 coerce 替换 &**o
-                    call(obj_ref, args)
-                        .ok_or_else(|| anyhow!("Failed to call immutable method '{}'", self.name()))
-                } else {
-                    bail!(
-                        "Immutable method '{}' requires object reference",
-                        self.name()
-                    )
-                }
-            }
-            MethodKind::Mutable { call, .. } => {
-                if let Some(o) = obj {
-                    call(o, args)
-                        .ok_or_else(|| anyhow!("Failed to call mutable method '{}'", self.name()))
-                } else {
-                    bail!(
-                        "Mutable method '{}' requires mutable object reference",
-                        self.name()
-                    )
-                }
-            }
-            MethodKind::Static { call, .. } => {
-                call(args).ok_or_else(|| anyhow!("Failed to call static method '{}'", self.name()))
+            MethodKind::Immutable { call, .. } => call(obj, args)
+                .ok_or_else(|| anyhow!("Failed to call immutable method '{}'", self.name())),
+            MethodKind::Mutable { call, .. } => call(obj, args)
+                .ok_or_else(|| anyhow!("Failed to call mutable method '{}'", self.name())),
+            MethodKind::Static { .. } => {
+                bail!(
+                    "Cannot call static method '{}' with object reference",
+                    self.name()
+                )
             }
         }
     }
+
+    /// 调用静态方法
+    pub fn call_static(&self, args: &[&dyn Any]) -> Result<Box<dyn Any>> {
+        match &self.kind {
+            MethodKind::Static { call, .. } => {
+                call(args).ok_or_else(|| anyhow!("Failed to call static method '{}'", self.name()))
+            }
+            MethodKind::Immutable { .. } => {
+                bail!("Cannot call instance method '{}' as static", self.name())
+            }
+            MethodKind::Mutable { .. } => {
+                bail!("Cannot call instance method '{}' as static", self.name())
+            }
+        }
+    }
+
     pub fn is_mutable(&self) -> bool {
         matches!(&self.kind, MethodKind::Mutable { .. })
     }
+
     pub fn is_immutable(&self) -> bool {
         matches!(&self.kind, MethodKind::Immutable { .. })
     }
@@ -194,6 +208,7 @@ inventory::collect!(MethodInfo);
 pub mod find {
     use super::*;
     use anyhow::{anyhow, Result};
+
     /// 根据名称查找方法（返回第一个匹配的）
     pub fn find_method<T: 'static>(name: &str) -> Result<&'static MethodInfo> {
         use inventory::iter;
@@ -205,6 +220,7 @@ pub mod find {
         }
         Err(anyhow!("Method '{}' not found", name))
     }
+
     /// 根据名称查找方法，如果没找到返回 None
     pub fn try_find_method<T: 'static>(name: &str) -> Option<&'static MethodInfo> {
         use inventory::iter;
@@ -216,6 +232,7 @@ pub mod find {
         }
         None
     }
+
     /// 查找所有匹配名称的方法（支持重载）
     pub fn find_all_methods<T: 'static>(name: &str) -> Vec<&'static MethodInfo> {
         use inventory::iter;
@@ -228,6 +245,7 @@ pub mod find {
         }
         methods
     }
+
     /// 查找不可变方法
     pub fn find_immutable_method<T: 'static>(name: &str) -> Result<&'static MethodInfo> {
         use inventory::iter;
@@ -239,6 +257,7 @@ pub mod find {
         }
         Err(anyhow!("Immutable method '{}' not found", name))
     }
+
     /// 查找可变方法
     pub fn find_mutable_method<T: 'static>(name: &str) -> Result<&'static MethodInfo> {
         use inventory::iter;
@@ -250,6 +269,19 @@ pub mod find {
         }
         Err(anyhow!("Mutable method '{}' not found", name))
     }
+
+    /// 查找静态方法
+    pub fn find_static_method<T: 'static>(name: &str) -> Result<&'static MethodInfo> {
+        use inventory::iter;
+        let target_type_id = TypeId::of::<T>();
+        for method in iter::<MethodInfo> {
+            if method.type_id == target_type_id && method.matches(name) && method.is_static() {
+                return Ok(method);
+            }
+        }
+        Err(anyhow!("Static method '{}' not found", name))
+    }
+
     /// 获取所有方法列表
     pub fn all_methods<T: 'static>() -> Vec<&'static MethodInfo> {
         use inventory::iter;
@@ -262,6 +294,7 @@ pub mod find {
         }
         methods
     }
+
     /// 获取所有方法名称（去重）
     pub fn all_method_names<T: 'static>() -> Vec<&'static str> {
         use inventory::iter;
@@ -276,6 +309,7 @@ pub mod find {
         names.dedup();
         names
     }
+
     /// 获取方法数量
     pub fn method_count<T: 'static>() -> usize {
         use inventory::iter;
@@ -288,20 +322,30 @@ pub mod find {
         }
         count
     }
+
     /// 检查方法是否存在
     pub fn has_method<T: 'static>(name: &str) -> bool {
         try_find_method::<T>(name).is_some()
     }
+
     /// 检查是否存在不可变方法
     pub fn has_immutable_method<T: 'static>(name: &str) -> bool {
         try_find_method::<T>(name)
             .map(|m| m.is_immutable())
             .unwrap_or(false)
     }
+
     /// 检查是否存在可变方法
     pub fn has_mutable_method<T: 'static>(name: &str) -> bool {
         try_find_method::<T>(name)
             .map(|m| m.is_mutable())
+            .unwrap_or(false)
+    }
+
+    /// 检查是否存在静态方法
+    pub fn has_static_method<T: 'static>(name: &str) -> bool {
+        try_find_method::<T>(name)
+            .map(|m| m.is_static())
             .unwrap_or(false)
     }
 }
@@ -310,23 +354,26 @@ pub mod find {
 pub mod call {
     use super::*;
     use anyhow::{anyhow, bail, Context, Result};
-    /// 通过不可变引用调用方法（仅限不可变或静态方法）
-    pub fn call<T: Any>(
-        method_name: &str,
-        obj: Option<&T>,
-        args: &[&dyn Any],
-    ) -> Result<Box<dyn Any>> {
+
+    /// 通过不可变引用调用方法（仅限不可变方法）
+    pub fn call<T: Any>(method_name: &str, obj: &T, args: &[&dyn Any]) -> Result<Box<dyn Any>> {
         let method = find::find_method::<T>(method_name)
             .with_context(|| format!("Failed to find method '{}'", method_name))?;
-        let obj_any = obj.map(|o| o as &dyn Any);
+
+        if !method.is_immutable() {
+            bail!("Method '{}' is not immutable", method_name);
+        }
+
+        let obj_any = obj as &dyn Any;
         method
             .call(obj_any, args)
             .with_context(|| format!("Failed to call method '{}'", method_name))
     }
+
     /// 通过不可变引用调用方法，并尝试转换为特定类型
     pub fn call_and_downcast<T: Any, R: Any>(
         method_name: &str,
-        obj: Option<&T>,
+        obj: &T,
         args: &[&dyn Any],
     ) -> Result<R> {
         let result = call(method_name, obj, args)?;
@@ -338,23 +385,26 @@ pub mod call {
             )
         })
     }
-    /// 通过可变引用调用方法（支持所有方法）
+
+    /// 通过可变引用调用方法（支持可变和不可变方法）
     pub fn call_mut<T: Any>(
         method_name: &str,
-        obj: Option<&mut T>,
+        obj: &mut T,
         args: &[&dyn Any],
     ) -> Result<Box<dyn Any>> {
         let method = find::find_method::<T>(method_name)
             .with_context(|| format!("Failed to find method '{}'", method_name))?;
-        let obj_any_mut = obj.map(|o| o as &mut dyn Any);
+
+        let obj_any_mut = obj as &mut dyn Any;
         method
             .call_mut(obj_any_mut, args)
             .with_context(|| format!("Failed to call method '{}'", method_name))
     }
+
     /// 通过可变引用调用方法，并尝试转换为特定类型
     pub fn call_mut_and_downcast<T: Any, R: Any>(
         method_name: &str,
-        obj: Option<&mut T>,
+        obj: &mut T,
         args: &[&dyn Any],
     ) -> Result<R> {
         let result = call_mut(method_name, obj, args)?;
@@ -366,32 +416,75 @@ pub mod call {
             )
         })
     }
+
+    /// 调用静态方法
+    pub fn call_static<T: Any>(method_name: &str, args: &[&dyn Any]) -> Result<Box<dyn Any>> {
+        let method = find::find_method::<T>(method_name)
+            .with_context(|| format!("Failed to find method '{}'", method_name))?;
+
+        if !method.is_static() {
+            bail!("Method '{}' is not static", method_name);
+        }
+
+        method
+            .call_static(args)
+            .with_context(|| format!("Failed to call static method '{}'", method_name))
+    }
+
+    /// 调用静态方法并尝试转换为特定类型
+    pub fn call_static_and_downcast<T: Any, R: Any>(
+        method_name: &str,
+        args: &[&dyn Any],
+    ) -> Result<R> {
+        let result = call_static::<T>(method_name, args)?;
+        result.downcast::<R>().map(|boxed| *boxed).map_err(|_| {
+            anyhow!(
+                "Failed to downcast result of static method '{}' to type '{}'",
+                method_name,
+                std::any::type_name::<R>()
+            )
+        })
+    }
+
     /// 尝试调用方法，自动判断是否需要可变性
     pub fn try_call<T: Any>(method_name: &str, obj: &T, args: &[&dyn Any]) -> Result<Box<dyn Any>> {
         let method = find::find_method::<T>(method_name)
             .with_context(|| format!("Failed to find method '{}'", method_name))?;
+
         if method.is_immutable() {
             method
-                .call(Some(obj as &dyn Any), args)
+                .call(obj as &dyn Any, args)
                 .with_context(|| format!("Failed to call immutable method '{}'", method_name))
         } else {
             bail!("Method '{}' requires mutable reference", method_name)
         }
     }
+
     /// 调用方法并忽略返回值（用于有副作用的调用）
     pub fn call_void<T: Any>(method_name: &str, obj: &mut T, args: &[&dyn Any]) -> Result<()> {
-        call_mut(method_name, Some(obj), args)?; // 修复：添加 Some
+        call_mut(method_name, obj, args)?;
         Ok(())
     }
-    /// 检查是否可调用
+
+    /// 检查是否可调用（不可变）
     pub fn can_call<T: Any>(method_name: &str, _obj: &T) -> bool {
         find::try_find_method::<T>(method_name)
             .map(|method| method.is_immutable())
             .unwrap_or(false)
     }
+
     /// 检查是否可调用（可变）
     pub fn can_call_mut<T: Any>(method_name: &str, _obj: &mut T) -> bool {
-        find::try_find_method::<T>(method_name).is_some()
+        find::try_find_method::<T>(method_name)
+            .map(|method| !method.is_static())
+            .unwrap_or(false)
+    }
+
+    /// 检查是否可调用（静态）
+    pub fn can_call_static<T: Any>(method_name: &str) -> bool {
+        find::try_find_method::<T>(method_name)
+            .map(|method| method.is_static())
+            .unwrap_or(false)
     }
 }
 
@@ -399,6 +492,7 @@ pub mod call {
 pub mod util {
     use super::*;
     use anyhow::{anyhow, Context, Result};
+
     /// 批量调用多个方法
     pub fn batch_call<T: Any>(
         obj: &T,
@@ -406,17 +500,19 @@ pub mod util {
     ) -> Result<Vec<Box<dyn Any>>> {
         let mut results = Vec::with_capacity(calls.len());
         for (method_name, args) in calls {
-            let result = call::call(method_name, Some(obj), args)  // 修复：添加 Some
+            let result = call::call(method_name, obj, args)
                 .with_context(|| format!("Failed to call method '{}' in batch", method_name))?;
             results.push(result);
         }
         Ok(results)
     }
+
     /// 链式调用构建器
     pub struct MethodChain<'a, T: Any> {
         obj: &'a T,
         calls: Vec<(&'static str, Vec<&'a dyn Any>)>,
     }
+
     impl<'a, T: Any> MethodChain<'a, T> {
         /// 创建新的链式调用
         pub fn new(obj: &'a T) -> Self {
@@ -425,15 +521,18 @@ pub mod util {
                 calls: Vec::new(),
             }
         }
+
         /// 添加一个方法调用
         pub fn call(mut self, method_name: &'static str, args: Vec<&'a dyn Any>) -> Self {
             self.calls.push((method_name, args));
             self
         }
+
         /// 执行所有链式调用
         pub fn execute(self) -> Result<Vec<Box<dyn Any>>> {
             batch_call(self.obj, &self.calls)
         }
+
         /// 执行链式调用，只返回最后一个结果
         pub fn execute_last(self) -> Result<Box<dyn Any>> {
             let results = self.execute()?;
@@ -443,19 +542,23 @@ pub mod util {
                 .ok_or_else(|| anyhow!("No methods to call"))
         }
     }
+
     /// 动态调用包装器（不可变版本）
     pub struct DynamicInvoker<'a, T: Any> {
         obj: &'a T,
     }
+
     impl<'a, T: Any> DynamicInvoker<'a, T> {
         /// 为不可变对象创建调用器
         pub fn new(obj: &'a T) -> Self {
             Self { obj }
         }
+
         /// 调用方法
         pub fn invoke(&self, method_name: &str, args: &[&dyn Any]) -> Result<Box<dyn Any>> {
             call::try_call(method_name, self.obj, args)
         }
+
         /// 调用方法并转换类型
         pub fn invoke_as<R: Any>(&self, method_name: &str, args: &[&dyn Any]) -> Result<R> {
             let result = self.invoke(method_name, args)?;
@@ -467,6 +570,7 @@ pub mod util {
                 )
             })
         }
+
         /// 检查方法是否存在且可调用
         pub fn can_invoke(&self, method_name: &str) -> bool {
             find::try_find_method::<T>(method_name)
@@ -474,19 +578,23 @@ pub mod util {
                 .unwrap_or(false)
         }
     }
+
     /// 动态调用包装器（可变版本）
     pub struct DynamicInvokerMut<'a, T: Any> {
         obj: &'a mut T,
     }
+
     impl<'a, T: Any> DynamicInvokerMut<'a, T> {
         /// 为可变对象创建调用器
         pub fn new(obj: &'a mut T) -> Self {
             Self { obj }
         }
+
         /// 调用方法
         pub fn invoke(&mut self, method_name: &str, args: &[&dyn Any]) -> Result<Box<dyn Any>> {
-            call::call_mut(method_name, Some(self.obj), args) // 修复：添加 Some
+            call::call_mut(method_name, self.obj, args)
         }
+
         /// 调用方法并转换类型
         pub fn invoke_as<R: Any>(&mut self, method_name: &str, args: &[&dyn Any]) -> Result<R> {
             let result = self.invoke(method_name, args)?;
@@ -498,49 +606,55 @@ pub mod util {
                 )
             })
         }
+
         /// 检查方法是否存在且可调用
         pub fn can_invoke(&self, method_name: &str) -> bool {
             find::try_find_method::<T>(method_name).is_some()
         }
+
         /// 获取内部对象的可变引用
         pub fn into_inner(self) -> &'a mut T {
             self.obj
         }
+
         /// 获取内部对象的不可变引用
         pub fn as_ref(&self) -> &T {
             self.obj
         }
+
         /// 获取内部对象的可变引用
         pub fn as_mut(&mut self) -> &mut T {
             self.obj
         }
     }
+
     /// 通用的动态调用器（根据对象可变性自动选择）
     pub enum DynamicCaller<'a, T: Any> {
         Immutable(DynamicInvoker<'a, T>),
         Mutable(DynamicInvokerMut<'a, T>),
     }
+
     impl<'a, T: Any> DynamicCaller<'a, T> {
         /// 为不可变对象创建调用器
         pub fn new(obj: &'a T) -> Self {
             Self::Immutable(DynamicInvoker::new(obj))
         }
+
         /// 为可变对象创建调用器
         pub fn new_mut(obj: &'a mut T) -> Self {
             Self::Mutable(DynamicInvokerMut::new(obj))
         }
+
         /// 消耗自身并返回内部对象
         pub fn into_inner(self) -> &'a mut T {
             match self {
                 Self::Immutable(_invoker) => {
                     panic!("Cannot get mutable reference from immutable caller")
                 }
-                Self::Mutable(invoker) => {
-                    // 注意：这需要修改 DynamicInvokerMut 的结构
-                    invoker.into_inner()
-                }
+                Self::Mutable(invoker) => invoker.into_inner(),
             }
         }
+
         /// 通过内部方法访问值，避免借用冲突
         pub fn get_value(&self) -> Option<&T> {
             match self {
@@ -548,6 +662,7 @@ pub mod util {
                 Self::Mutable(invoker) => Some(invoker.as_ref()),
             }
         }
+
         /// 调用方法
         pub fn invoke(&mut self, method_name: &str, args: &[&dyn Any]) -> Result<Box<dyn Any>> {
             match self {
@@ -555,6 +670,7 @@ pub mod util {
                 Self::Mutable(invoker) => invoker.invoke(method_name, args),
             }
         }
+
         /// 调用方法并转换类型
         pub fn invoke_as<R: Any>(&mut self, method_name: &str, args: &[&dyn Any]) -> Result<R> {
             match self {
@@ -562,6 +678,7 @@ pub mod util {
                 Self::Mutable(invoker) => invoker.invoke_as(method_name, args),
             }
         }
+
         /// 检查方法是否存在且可调用
         pub fn can_invoke(&self, method_name: &str) -> bool {
             match self {
@@ -569,6 +686,7 @@ pub mod util {
                 Self::Mutable(invoker) => invoker.can_invoke(method_name),
             }
         }
+
         /// 转换为不可变调用器（如果有可变引用，则降级为不可变）
         pub fn as_immutable(&self) -> DynamicInvoker<'_, T> {
             match self {
@@ -583,22 +701,26 @@ pub mod util {
 pub mod error {
     use anyhow::Error;
     use std::fmt;
+
     /// 方法调用错误
     #[derive(Debug)]
     pub struct MethodError {
         pub method_name: String,
         pub error: Error,
     }
+
     impl fmt::Display for MethodError {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             write!(f, "Method '{}' error: {}", self.method_name, self.error)
         }
     }
+
     impl std::error::Error for MethodError {
         fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
             Some(self.error.as_ref())
         }
     }
+
     /// 创建方法错误
     pub fn method_error(method_name: &str, error: Error) -> MethodError {
         MethodError {
