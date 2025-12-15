@@ -1,4 +1,4 @@
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context as _, Result};
 use std::any::{Any, TypeId};
 
 /// 动态字段获取 trait
@@ -108,13 +108,13 @@ pub struct MethodInfo {
 #[derive(Debug)]
 pub enum MethodKind {
     Immutable {
-        call: fn(obj: &dyn Any, args: &[&dyn Any]) -> Option<Box<dyn Any>>,
+        call: fn(obj: &dyn Any, args: &[&dyn Any]) -> Result<Box<dyn Any>>,
     },
     Mutable {
-        call: fn(obj: &mut dyn Any, args: &[&dyn Any]) -> Option<Box<dyn Any>>,
+        call: fn(obj: &mut dyn Any, args: &[&dyn Any]) -> Result<Box<dyn Any>>,
     },
     Static {
-        call: fn(args: &[&dyn Any]) -> Option<Box<dyn Any>>,
+        call: fn(args: &[&dyn Any]) -> Result<Box<dyn Any>>,
     },
 }
 
@@ -132,20 +132,8 @@ impl MethodInfo {
     /// 通过不可变引用调用方法
     pub fn call(&self, obj: &dyn Any, args: &[&dyn Any]) -> Result<Box<dyn Any>> {
         match &self.kind {
-            MethodKind::Immutable { call, .. } => {
-                let r = call(obj, args);
-                match r {
-                    Some(r1) => {
-                        //
-                        Ok(r1)
-                    }
-                    None => {
-                        //
-                        bail!("Failed to call immutable method '{}'", self.name())
-                    }
-                }
-                //.ok_or_else(|| anyhow!("Failed to call immutable method '{}'", self.name()))
-            }
+            MethodKind::Immutable { call, .. } => call(obj, args)
+                .with_context(|| format!("Failed to call immutable method '{}'", self.name())),
             MethodKind::Mutable { .. } => {
                 bail!(
                     "Cannot call mutable method '{}' with immutable reference",
@@ -165,9 +153,9 @@ impl MethodInfo {
     pub fn call_mut(&self, obj: &mut dyn Any, args: &[&dyn Any]) -> Result<Box<dyn Any>> {
         match &self.kind {
             MethodKind::Immutable { call, .. } => call(obj, args)
-                .ok_or_else(|| anyhow!("Failed to call immutable method '{}'", self.name())),
+                .with_context(|| format!("Failed to call immutable method '{}'", self.name())),
             MethodKind::Mutable { call, .. } => call(obj, args)
-                .ok_or_else(|| anyhow!("Failed to call mutable method '{}'", self.name())),
+                .with_context(|| format!("Failed to call mutable method '{}'", self.name())),
             MethodKind::Static { .. } => {
                 bail!(
                     "Cannot call static method '{}' with object reference",
@@ -180,9 +168,8 @@ impl MethodInfo {
     /// 调用静态方法
     pub fn call_static(&self, args: &[&dyn Any]) -> Result<Box<dyn Any>> {
         match &self.kind {
-            MethodKind::Static { call, .. } => {
-                call(args).ok_or_else(|| anyhow!("Failed to call static method '{}'", self.name()))
-            }
+            MethodKind::Static { call, .. } => call(args)
+                .with_context(|| format!("Failed to call static method '{}'", self.name())),
             MethodKind::Immutable { .. } => {
                 bail!("Cannot call instance method '{}' as static", self.name())
             }
@@ -218,7 +205,11 @@ pub mod find {
                 return Ok(method);
             }
         }
-        Err(anyhow!("Method '{}' not found", name))
+        Err(anyhow!(
+            "Method '{}' not found for type '{}'",
+            name,
+            std::any::type_name::<T>()
+        ))
     }
 
     /// 根据名称查找方法，如果没找到返回 None
@@ -255,7 +246,11 @@ pub mod find {
                 return Ok(method);
             }
         }
-        Err(anyhow!("Immutable method '{}' not found", name))
+        Err(anyhow!(
+            "Immutable method '{}' not found for type '{}'",
+            name,
+            std::any::type_name::<T>()
+        ))
     }
 
     /// 查找可变方法
@@ -267,7 +262,11 @@ pub mod find {
                 return Ok(method);
             }
         }
-        Err(anyhow!("Mutable method '{}' not found", name))
+        Err(anyhow!(
+            "Mutable method '{}' not found for type '{}'",
+            name,
+            std::any::type_name::<T>()
+        ))
     }
 
     /// 查找静态方法
@@ -279,7 +278,11 @@ pub mod find {
                 return Ok(method);
             }
         }
-        Err(anyhow!("Static method '{}' not found", name))
+        Err(anyhow!(
+            "Static method '{}' not found for type '{}'",
+            name,
+            std::any::type_name::<T>()
+        ))
     }
 
     /// 获取所有方法列表
