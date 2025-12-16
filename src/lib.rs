@@ -463,12 +463,6 @@ pub mod call {
         }
     }
 
-    /// 调用方法并忽略返回值（用于有副作用的调用）
-    pub fn call_void<T: Any>(method_name: &str, obj: &mut T, args: &[&dyn Any]) -> Result<()> {
-        call_mut(method_name, obj, args)?;
-        Ok(())
-    }
-
     /// 检查是否可调用（不可变）
     pub fn can_call<T: Any>(method_name: &str, _obj: &T) -> bool {
         find::try_find_method::<T>(method_name)
